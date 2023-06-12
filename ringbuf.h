@@ -87,9 +87,9 @@ int ringbuf_is_empty(struct ringbuf_t *rb);
 /*
  * access to the head and tail pointers of the ring buffer.
  */
-gconstpointer ringbuf_tail(struct ringbuf_t *rb);
+const guint8 *ringbuf_tail(struct ringbuf_t *rb);
 
-gconstpointer ringbuf_head(struct ringbuf_t *rb);
+const guint8 *ringbuf_head(struct ringbuf_t *rb);
 
 /*
  * Copy n bytes from a contiguous memory area src into the ring buffer
