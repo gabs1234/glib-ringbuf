@@ -18,9 +18,10 @@
 #include <stdio.h>
 
 /* Default size for these tests. */
-#define RINGBUF_SIZE 100
 #define nb_images 100
 #define image_size 10 // in bytes
+#define N 1000
+#define RINGBUF_SIZE N*image_size // Save n images without overwriting
 
 ringbuf_t rb;
 gboolean stop = FALSE;
@@ -29,21 +30,19 @@ gsize total_data_received = 0, total_data_read = 0, total_data = nb_images * ima
 GArray *images;
 
 gpointer writer_thread (gpointer data) {
-    guint8 *buf = g_malloc0 (image_size * sizeof (buf));
+    guint8 *buf = g_malloc (image_size * sizeof (guint8));
 
-    int i = 0;
-
+    guint8 i = 0;
 
     g_print ("Starting to memcpy into ring\n", image_size);
-    while (!stop && total_data_received < total_data) {
+    while (!stop) {
         for (int j = 0; j < image_size; j++) {
             buf[j] = i;
             i++;
         }
-        g_print ("Writing %d bytes\n", image_size);
         ringbuf_memcpy_into(rb, buf, image_size);
         total_data_received += image_size;
-        // sleep(.1);
+        g_usleep(10000);
     }
 
     g_free (buf);
@@ -53,9 +52,12 @@ gpointer writer_thread (gpointer data) {
 
 gpointer reader_thread (gpointer data) {
     guint8 *buf = NULL;
+    static gboolean first = TRUE;
     g_print ("Starting to read ringbuff\n");
 
-    while (!stop && total_data_read < total_data) {
+        g_usleep(100000);
+
+    while (!stop) {
         // if (ringbuf_tail(rb) > ringbuf_head(rb)) {
         //     // g_print ("Not enough data to read\n");
         //     // sleep(.1);
@@ -65,12 +67,19 @@ gpointer reader_thread (gpointer data) {
         //     g_print ("Reading %d bytes\n", image_size);
         // }
 
-        buf = g_malloc0 (image_size * sizeof (buf));
+        buf = g_malloc (image_size * sizeof (guint8));
         if (buf == NULL) {
-            printf("Error allocating packet buffer\n");
+            // printf("Error allocating packet buffer\n");
             return NULL;
         }
-        ringbuf_memcpy_from (buf, rb, image_size);
+
+        gpointer res = ringbuf_memcpy_from (buf, rb, image_size);
+
+        if (res == NULL) {
+            // printf("Not enough data available\n");
+            g_free (buf);
+            continue;
+        }
 
         total_data_read += image_size;
 
@@ -79,9 +88,6 @@ gpointer reader_thread (gpointer data) {
             printf("%d ", buf[i]);
         }
         printf("\n");
-
-        // Add image to array
-        g_array_append_val (images, buf);
     }
     
     return NULL;

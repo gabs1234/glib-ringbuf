@@ -130,44 +130,42 @@ static guint8 *ringbuf_nextp (ringbuf_t rb, const guint8 *p) {
     return rb->buf + ((++p - rb->buf) % ringbuf_buffer_size(rb));
 }
 
-gpointer ringbuf_memcpy_into(ringbuf_t dst, gconstpointer src, gsize count) {
-
-    const guint8 * u8src = src;
-    const guint8 *bufend = ringbuf_end(dst);
-    guint8 *dsthead = (guint8 *)ringbuf_head(dst);
-
-    gboolean overflow = count > ringbuf_bytes_free(dst);
-    gsize nread = 0, n, diff;
-    
-
-    while (nread != count) {
-        /* don't copy beyond the end of the buffer */
-        g_assert(bufend > dsthead);
-        diff = bufend - dsthead;
-        n = MIN(diff, count - nread);
-        memcpy(dsthead, u8src + nread, n);
-        dsthead += n;
-        nread += n;
-
-        /* wrap? */
-        if (dsthead == bufend)
-            dsthead = dst->buf;
-    }
-
-    g_mutex_lock(&dst->mutex);
-    dst->head = dsthead;
-    g_mutex_unlock(&dst->mutex);
-
-    if (overflow) {
-        /* mark the ring buffer as full */
-        g_mutex_lock(&dst->mutex);
-        dst->tail = ringbuf_nextp(dst, dsthead);
-        g_mutex_unlock(&dst->mutex);
-        g_assert(ringbuf_is_full(dst));
-    }
-
-    return dsthead;
+// Define a macro to generate the function for a given data type
+#define RINGBUF_MEMCPY_INTO_FUNC(type) \
+gpointer ringbuf_memcpy_into_##type(ringbuf_t dst, const type *src, gsize count) { \
+    const guint8 *u8src = (const guint8 *)src; \
+    const guint8 *bufend = ringbuf_end(dst); \
+    guint8 *dsthead = (guint8 *)ringbuf_head(dst); \
+    gboolean overflow = count > ringbuf_bytes_free(dst); \
+    gsize nread = 0, n, diff; \
+    while (nread != count) { \
+        /* don't copy beyond the end of the buffer */ \
+        g_assert(bufend > dsthead); \
+        diff = bufend - dsthead; \
+        n = MIN(diff, count - nread); \
+        memcpy(dsthead, u8src + nread, n * sizeof(type)); \
+        dsthead += n * sizeof(type); \
+        nread += n; \
+        /* wrap? */ \
+        if (dsthead == bufend) \
+            dsthead = dst->buf; \
+    } \
+    g_mutex_lock(&dst->mutex); \
+    dst->head = dsthead; \
+    g_mutex_unlock(&dst->mutex); \
+    if (overflow) { \
+        /* mark the ring buffer as full */ \
+        g_mutex_lock(&dst->mutex); \
+        dst->tail = ringbuf_nextp(dst, dsthead); \
+        g_mutex_unlock(&dst->mutex); \
+        g_assert(ringbuf_is_full(dst)); \
+    } \
+    return dsthead; \
 }
+
+// Generate the functions for guint16 and guint64
+RINGBUF_MEMCPY_INTO_FUNC(guint16)
+RINGBUF_MEMCPY_INTO_FUNC(guint64)
 
 gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t src, gsize count) {
     gsize bytes_used = ringbuf_bytes_used(src), n = 0, diff = 0;
