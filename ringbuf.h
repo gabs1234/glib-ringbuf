@@ -38,7 +38,7 @@ typedef struct ringbuf_t *ringbuf_t;
  * Returns the new ring buffer object, or 0 if there's not enough
  * memory to fulfill the request for the given capacity.
  */
-ringbuf_t ringbuf_new(gsize capacity);
+ringbuf_t ringbuf_new (gsize size, guint capacity);
 
 /*
  * The size of the internal buffer, in bytes. One or more bytes may be
@@ -87,9 +87,9 @@ int ringbuf_is_empty(struct ringbuf_t *rb);
 /*
  * access to the head and tail pointers of the ring buffer.
  */
-const guint8 *ringbuf_tail(struct ringbuf_t *rb);
+gconstpointer ringbuf_tail(struct ringbuf_t *rb);
 
-const guint8 *ringbuf_head(struct ringbuf_t *rb);
+gconstpointer ringbuf_head(struct ringbuf_t *rb);
 
 /*
  * Copy n bytes from a contiguous memory area src into the ring buffer

@@ -16,18 +16,18 @@
 #include "ringbuf.h"
 
 struct ringbuf_t {
-    guint8 *buf;
-    guint8 *head, *tail;
-    gsize size;
+    gpointer buf, head, tail;
+    gsize element_size, total_size;
     GMutex mutex;
 };
 
-ringbuf_t ringbuf_new (gsize capacity) {
+ringbuf_t ringbuf_new (gsize size, guint capacity) {
     ringbuf_t rb = g_new0(struct ringbuf_t, 1);
     if (rb) {
         /* One byte is used for detecting the full condition. */
-        rb->size = capacity + 1;
-        rb->buf = g_malloc(rb->size);
+        rb->element_size = size;
+        rb->total_size = (capacity + 1) * size;
+        rb->buf = g_malloc(rb->total_size);
         if (rb->buf)
             ringbuf_reset(rb);
         else {
@@ -40,11 +40,11 @@ ringbuf_t ringbuf_new (gsize capacity) {
 }
 
 gsize ringbuf_buffer_size (const struct ringbuf_t *rb) {
-    return rb->size;
+    return rb->total_size;
 }
 
 void ringbuf_reset (ringbuf_t rb) {
-    guint8 *current_buf = NULL;
+    gpointer *current_buf = NULL;
     g_mutex_lock(&rb->mutex);
     current_buf = rb->buf;
     rb->head = current_buf;
@@ -70,8 +70,8 @@ gsize ringbuf_capacity (const struct ringbuf_t *rb) {
  * contiguous buffer. You shouldn't normally need to use this function
  * unless you're writing a new ringbuf_* function.
  */
-static const guint8 *ringbuf_end (const struct ringbuf_t *rb) {
-    return rb->buf + ringbuf_buffer_size(rb);
+static gconstpointer ringbuf_end (const struct ringbuf_t *rb) {
+    return (guint8 *)(rb->buf) + ringbuf_buffer_size(rb);
 }
 
 gsize ringbuf_bytes_free (struct ringbuf_t *rb) {
@@ -99,16 +99,16 @@ gboolean ringbuf_is_empty (struct ringbuf_t *rb) {
     return (ringbuf_bytes_free (rb) == ringbuf_capacity (rb));
 }
 
-const guint8 *ringbuf_tail (struct ringbuf_t *rb) {
-    const guint8 *retval = 0;
+gconstpointer ringbuf_tail (struct ringbuf_t *rb) {
+    gpointer retval = NULL;
     g_mutex_lock(&rb->mutex);
     retval = rb->tail;
     g_mutex_unlock(&rb->mutex);
     return retval;
 }
 
-const guint8 *ringbuf_head (struct ringbuf_t *rb) {
-    const guint8 *retval = 0;
+gconstpointer ringbuf_head (struct ringbuf_t *rb) {
+    gpointer retval = NULL;
     g_mutex_lock(&rb->mutex);
     retval = rb->head;
     g_mutex_unlock(&rb->mutex);
@@ -120,52 +120,62 @@ const guint8 *ringbuf_head (struct ringbuf_t *rb) {
  * contiguous buffer, return the a pointer to the next logical
  * location in the ring buffer.
  */
-static guint8 *ringbuf_nextp (ringbuf_t rb, const guint8 *p) {
+static gpointer ringbuf_nextp (ringbuf_t rb, gconstpointer p) {
     /*
      * The assert guarantees the expression (++p - rb->buf) is
      * non-negative; therefore, the modulus operation is safe and
      * portable.
      */
-    g_assert((p >= rb->buf) && (p < ringbuf_end(rb)));
-    return rb->buf + ((++p - rb->buf) % ringbuf_buffer_size(rb));
+    guint8 *p_uint8 = (gpointer)p;
+    guint8 *buf_uint8 = rb->buf;
+    p_uint8 += rb->element_size;
+
+    g_return_val_if_fail ((p_uint8 >= buf_uint8) && (p_uint8 < (guint8 *)ringbuf_end(rb)), NULL);
+    
+    return buf_uint8 + ((p_uint8 - buf_uint8) % ringbuf_buffer_size(rb));
 }
 
-// Define a macro to generate the function for a given data type
-#define RINGBUF_MEMCPY_INTO_FUNC(type) \
-gpointer ringbuf_memcpy_into_##type(ringbuf_t dst, const type *src, gsize count) { \
-    const guint8 *u8src = (const guint8 *)src; \
-    const guint8 *bufend = ringbuf_end(dst); \
-    guint8 *dsthead = (guint8 *)ringbuf_head(dst); \
-    gboolean overflow = count > ringbuf_bytes_free(dst); \
-    gsize nread = 0, n, diff; \
-    while (nread != count) { \
-        /* don't copy beyond the end of the buffer */ \
-        g_assert(bufend > dsthead); \
-        diff = bufend - dsthead; \
-        n = MIN(diff, count - nread); \
-        memcpy(dsthead, u8src + nread, n * sizeof(type)); \
-        dsthead += n * sizeof(type); \
-        nread += n; \
-        /* wrap? */ \
-        if (dsthead == bufend) \
-            dsthead = dst->buf; \
-    } \
-    g_mutex_lock(&dst->mutex); \
-    dst->head = dsthead; \
-    g_mutex_unlock(&dst->mutex); \
-    if (overflow) { \
-        /* mark the ring buffer as full */ \
-        g_mutex_lock(&dst->mutex); \
-        dst->tail = ringbuf_nextp(dst, dsthead); \
-        g_mutex_unlock(&dst->mutex); \
-        g_assert(ringbuf_is_full(dst)); \
-    } \
-    return dsthead; \
-}
+gpointer ringbuf_memcpy_into(ringbuf_t dst, gconstpointer src, gsize count) {
+    const guint8 *u8src = src;
+    const guint8 *bufend = ringbuf_end(dst);
+    guint8 *dsthead = ringbuf_head(dst);
 
-// Generate the functions for guint16 and guint64
-RINGBUF_MEMCPY_INTO_FUNC(guint16)
-RINGBUF_MEMCPY_INTO_FUNC(guint64)
+    gboolean overflow = count > ringbuf_bytes_free(dst);
+    gsize nread = 0, n, diff = 0;
+
+    while (nread != count) {
+        /* don't copy beyond the end of the buffer */
+        if (bufend <= dsthead)
+            break;
+        
+        diff = bufend - dsthead;
+        n = MIN(diff, count - nread);
+        memcpy(dsthead, u8src + nread, n);
+        dsthead += n;
+        nread += n;
+
+        /* wrap? */
+        if (dsthead == bufend)
+            dsthead = dst->buf;
+    }
+
+    g_mutex_lock(&dst->mutex);
+    dst->head = dsthead;
+    g_mutex_unlock(&dst->mutex);
+
+    if (overflow) {
+        /* mark the ring buffer as full */
+        g_mutex_lock(&dst->mutex);
+        dst->tail = ringbuf_nextp(dst, dsthead);
+        g_mutex_unlock(&dst->mutex);
+        
+        if (!ringbuf_is_full(dst)) {
+            return NULL;
+        }
+    }
+
+    return dsthead;
+}
 
 gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t src, gsize count) {
     gsize bytes_used = ringbuf_bytes_used(src), n = 0, diff = 0;
@@ -174,12 +184,14 @@ gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t src, gsize count) {
     }
 
     guint8 *u8dst = dst;
-    guint8 *bufend = (guint8 *)ringbuf_end(src);
-    guint8 *tail = (guint8 *)ringbuf_tail(src);
+    guint8 *bufend = ringbuf_end(src);
+    guint8 *tail = ringbuf_tail(src);
 
     gsize nwritten = 0;
     while (nwritten != count) {
-        g_assert(bufend > tail);
+        if (bufend <= tail)
+            break;
+
         diff = bufend - tail;
         n = MIN(diff, count - nwritten);
         memcpy(u8dst + nwritten, tail, n);
@@ -195,9 +207,9 @@ gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t src, gsize count) {
     src->tail = tail;
     g_mutex_unlock(&src->mutex);
 
-    g_assert(count + ringbuf_bytes_used(src) == bytes_used);
+    if (count + ringbuf_bytes_used(src) != bytes_used) {
+        return NULL;
+    }
 
-    
-    
     return tail;
 }
