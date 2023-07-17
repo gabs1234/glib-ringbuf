@@ -19,6 +19,7 @@ struct ringbuf_t {
     gpointer buf, head, tail;
     gsize element_size, total_size;
     GMutex mutex;
+    GCond cond;
 };
 
 ringbuf_t ringbuf_new (gsize size, guint capacity) {
@@ -189,9 +190,11 @@ gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t src, gsize count) {
 
     gsize nwritten = 0;
     while (nwritten != count) {
-        if (bufend <= tail)
-            break;
-
+        while (bufend <= tail) {
+            g_cond_wait(&src->cond, &src->mutex);
+            bufend = ringbuf_end(src);
+        }
+        
         diff = bufend - tail;
         n = MIN(diff, count - nwritten);
         memcpy(u8dst + nwritten, tail, n);
