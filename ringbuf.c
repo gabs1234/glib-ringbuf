@@ -22,12 +22,12 @@ struct ringbuf_t {
     GCond cond;
 };
 
-ringbuf_t ringbuf_new (gsize size, guint capacity) {
+ringbuf_t ringbuf_new (gsize size, guint length) {
     ringbuf_t rb = g_new0(struct ringbuf_t, 1);
     if (rb) {
         /* One byte is used for detecting the full condition. */
         rb->element_size = size;
-        rb->total_size = (capacity + 1) * size;
+        rb->total_size = (length + 1) * size;
         rb->buf = g_malloc(rb->total_size);
         if (rb->buf)
             ringbuf_reset(rb);
@@ -40,7 +40,7 @@ ringbuf_t ringbuf_new (gsize size, guint capacity) {
     return rb;
 }
 
-gsize ringbuf_buffer_size (const struct ringbuf_t *rb) {
+gsize ringbuf_total_size (const struct ringbuf_t *rb) {
     return rb->total_size;
 }
 
@@ -63,7 +63,7 @@ void ringbuf_free (ringbuf_t *rb) {
 }
 
 gsize ringbuf_capacity (const struct ringbuf_t *rb) {
-    return ringbuf_buffer_size(rb) - 1;
+    return ringbuf_total_size(rb) - 1;
 }
 
 /*
@@ -72,7 +72,7 @@ gsize ringbuf_capacity (const struct ringbuf_t *rb) {
  * unless you're writing a new ringbuf_* function.
  */
 static gconstpointer ringbuf_end (const struct ringbuf_t *rb) {
-    return (guint8 *)(rb->buf) + ringbuf_buffer_size(rb);
+    return (guint8 *)(rb->buf) + ringbuf_total_size(rb);
 }
 
 gsize ringbuf_bytes_free (struct ringbuf_t *rb) {
@@ -83,7 +83,7 @@ gsize ringbuf_bytes_free (struct ringbuf_t *rb) {
     if (head >= tail)
         retval = ringbuf_capacity(rb) - (gsize)(head - tail);
     else
-        retval =  (gsize)(tail - head) - 1;
+        retval = (gsize)(tail - head) - 1;
 
     return retval;
 }
@@ -133,7 +133,7 @@ static gpointer ringbuf_nextp (ringbuf_t rb, gconstpointer p) {
 
     g_return_val_if_fail ((p_uint8 >= buf_uint8) && (p_uint8 < (guint8 *)ringbuf_end(rb)), NULL);
     
-    return buf_uint8 + ((p_uint8 - buf_uint8) % ringbuf_buffer_size(rb));
+    return buf_uint8 + ((p_uint8 - buf_uint8) % ringbuf_total_size(rb));
 }
 
 gpointer ringbuf_memcpy_into(ringbuf_t dst, gconstpointer src, gsize count) {
