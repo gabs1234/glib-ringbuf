@@ -22,12 +22,12 @@ struct _ringbuf_t {
     GCond cond;
 };
 
-ringbuf_t *ringbuf_new (gsize size, guint length) {
+ringbuf_t *ringbuf_new (gsize element_size, guint length) {
     ringbuf_t *rb = g_new0(ringbuf_t, 1);
     if (rb != NULL) {
         /* One byte is used for detecting the full condition. */
-        rb->element_size = size;
-        rb->total_size = (length + 1) * size;
+        rb->element_size = element_size;
+        rb->total_size = (length + 1) * element_size;
         rb->buf = g_malloc(rb->total_size);
         if (rb->buf)
             ringbuf_reset(rb);
@@ -162,6 +162,7 @@ gpointer ringbuf_memcpy_into(ringbuf_t *dst, gconstpointer src, gsize count) {
 
     g_mutex_lock(&dst->mutex);
     dst->head = dsthead;
+    g_cond_signal (&dst->cond);
     g_mutex_unlock(&dst->mutex);
 
     if (overflow) {
@@ -180,9 +181,13 @@ gpointer ringbuf_memcpy_into(ringbuf_t *dst, gconstpointer src, gsize count) {
 
 gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t *src, gsize count) {
     gsize bytes_used = ringbuf_bytes_used(src), n = 0, diff = 0;
-    if (count > bytes_used) {
-        return NULL;
+
+    g_mutex_lock(&src->mutex);
+    while (src->head - src->tail < count) {
+        g_cond_wait(&src->cond, &src->mutex);
     }
+    g_mutex_unlock(&src->mutex);
+
 
     guint8 *u8dst = dst;
     guint8 *bufend = ringbuf_end(src);
@@ -190,12 +195,6 @@ gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t *src, gsize count) {
 
     gsize nwritten = 0;
     while (nwritten != count) {
-        g_mutex_lock(&src->mutex);
-        while (bufend <= tail) {
-            g_cond_wait(&src->cond, &src->mutex);
-            bufend = ringbuf_end(src);
-        }
-        g_mutex_unlock(&src->mutex);
         diff = bufend - tail;
         n = MIN(diff, count - nwritten);
         memcpy(u8dst + nwritten, tail, n);
@@ -210,10 +209,6 @@ gpointer ringbuf_memcpy_from (gpointer dst, ringbuf_t *src, gsize count) {
     g_mutex_lock(&src->mutex);
     src->tail = tail;
     g_mutex_unlock(&src->mutex);
-
-    if (count + ringbuf_bytes_used(src) != bytes_used) {
-        return NULL;
-    }
 
     return tail;
 }

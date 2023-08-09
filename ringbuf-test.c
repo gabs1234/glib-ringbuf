@@ -24,7 +24,7 @@ const gsize image_size = nb_pixels * bit_depth;
 const gsize nb_images = 100;
 const gsize ring_buf_size = nb_images * image_size;
 
-ringbuf_t rb;
+ringbuf_t *rb;
 gboolean stop = FALSE;
 gsize total_data_received = 0, total_data_read = 0, total_data = ring_buf_size;
 
@@ -33,16 +33,22 @@ GArray *images;
 gpointer writer_thread (gpointer data) {
     guint32 *buf = g_malloc (image_size);
     guint32 i = 0;
+    gpointer retval = NULL;
 
     g_print ("Starting to memcpy into ring %ld\n", image_size);
     while (!stop) {
         for (int j = 0; j < nb_pixels; j++) {
             buf[j] = i;
+            retval = ringbuf_memcpy_into (rb, buf+j, sizeof (guint32));
+            if (retval == NULL) {
+                printf("Not enough space available\n");
+                g_free (buf);
+                return NULL;
+            }
             i++;
         }
-        ringbuf_memcpy_into(rb, buf, image_size);
         total_data_received += image_size;
-        g_usleep(10);
+        g_usleep (G_USEC_PER_SEC/1000);
     }
 
     g_free (buf);
@@ -65,7 +71,7 @@ gpointer reader_thread (gpointer data) {
         gpointer res = ringbuf_memcpy_from (buf, rb, image_size);
 
         if (res == NULL) {
-            // printf("Not enough data available\n");
+            printf("Not enough data available\n");
             g_free (buf);
             continue;
         }
@@ -118,7 +124,7 @@ int main (int argc, char **argv) {
 
     // free stuff
     g_array_free (images, TRUE);
-    ringbuf_free (&rb);
+    ringbuf_free (rb);
 
     return 0;
 }
