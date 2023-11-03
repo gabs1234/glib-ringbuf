@@ -1,6 +1,10 @@
 #ifndef INCLUDED_RINGBUF_H
 #define INCLUDED_RINGBUF_H
 
+#define MAX_BYTE_POWER_OF_TWO 3
+typedef guint64 ringbuf_max_gsize;
+#define PLATFORM_MAX_BYTES 1 << MAX_BYTE_POWER_OF_TWO
+
 /*
  * ringbuf.h - C ring buffer (FIFO) interface.
  *

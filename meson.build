@@ -13,7 +13,7 @@ sources = files('ringbuf-test.c', 'ringbuf.c')
 sources2 = files('ringbuf-block.c', 'ringbuf.c')
 
 executable (
-    'ringbuf', 
+    'ringbuf-test', 
     sources, 
     dependencies: deps, 
     c_args: c_args,
