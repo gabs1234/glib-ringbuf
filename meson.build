@@ -10,7 +10,7 @@ glib_dep = dependency('glib-2.0', version: '>= 2.38')
 deps = [glib_dep]
 
 sources = files('ringbuf-test.c', 'ringbuf.c')
-sources2 = files('ringbuf-block.c', 'ringbuf.c')
+sources2 = files('write-image.c', 'ringbuf.c')
 
 executable (
     'ringbuf-test', 
@@ -20,8 +20,14 @@ executable (
     include_directories: headers)
 
 executable (
-    'ringbuf-block', 
+    'write-image', 
     sources2, 
     dependencies: deps, 
     c_args: c_args,
     include_directories: headers)
+# executable (
+#     'ringbuf-block', 
+#     sources2, 
+#     dependencies: deps, 
+#     c_args: c_args,
+#     include_directories: headers)
