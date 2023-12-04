@@ -35,6 +35,12 @@ typedef struct {
     gsize image_size;
 } packet_t;
 
+// Profiling variables
+GCond cond;
+GMutex mutex;
+guint64 start = 0, end = 0; // microseconds
+guint64 total_time = 0, current_time = 0; // microseconds
+
 ringbuf_t *rb;
 gboolean stop = FALSE;
 gsize total_data_received = 0, total_data_read = 0;
@@ -54,9 +60,23 @@ gboolean request_images (gint nb_images, guint x_res, guint y_res, guint byte_de
     request->byte_depth = byte_depth;
 
     g_async_queue_push (request_queue, request);
-    g_print ("Requesting %d images\n", nb_images);
+    // g_print ("Requesting %d images\n", nb_images);
 
     return TRUE;
+}
+
+gpointer profiler (gpointer data) {
+    g_print ("Starting profiler\n");
+    
+    g_mutex_lock (&mutex);
+    while (!stop) {
+        g_print ("time elapsed: %ld\n", current_time);
+        g_cond_wait (&cond, &mutex);
+    }
+    g_mutex_unlock (&mutex);
+
+    g_print ("Total time: %f\n", (gfloat)total_time/G_USEC_PER_SEC);
+    g_print ("Total data received: %ld\n", total_data_received);
 }
 
 gpointer generate_images (gpointer data) {
@@ -74,13 +94,15 @@ gpointer generate_images (gpointer data) {
             return FALSE;
         }
 
-        g_print ("Popped! Generating %d images\n", request->nb_images);
+        // g_print ("Popped! Generating %d images\n", request->nb_images);
 
         if (request->nb_images == 0) {
             image_struct = g_new0 (packet_t, 1);
             image_struct->buf = NULL;
             image_struct->nb_images = 0;
+
             g_async_queue_push (image_queue, image_struct);
+            g_free (request);
             return FALSE;
         }
 
@@ -134,12 +156,12 @@ gpointer receiver_thread (gpointer data) {
             break;
         }
 
-        g_print ("Received %d images\n", image_struct->nb_images);
+        // g_print ("Received %d images\n", image_struct->nb_images);
 
         buf = image_struct->buf;
         nb_images = image_struct->nb_images;
-        g_print ("Copying %d images\n", nb_images);
-        retval = ringbuf_memcpy_into (rb, buf, image_struct->packet_size);
+        // g_print ("Copying %d images\n", nb_images);
+        retval = ringbuf_push (rb, buf, image_struct->packet_size);
         if (retval == NULL) {
             printf("Not enough space available\n");
             g_free (buf);
@@ -151,6 +173,8 @@ gpointer receiver_thread (gpointer data) {
         g_free (image_struct);
     }
 
+    g_print ("Stopping\n");
+
     stop = TRUE;
     return NULL;
 }
@@ -159,20 +183,28 @@ gpointer reader_thread (gpointer data) {
     guint16 *buf = NULL;
     static gboolean first = TRUE;
 
-    gsize image_size = 1000 * 1000 * 2;
+    gsize image_size = 1952 * 2048 * 2;
     
     buf = g_malloc (image_size);
     if (buf == NULL) {
         // printf("Error allocating packet buffer\n");
         return NULL;
     }
+
     while (!stop) {
-        gpointer res = ringbuf_memcpy_from (buf, rb, image_size);
+        start = g_get_monotonic_time ();
+        gpointer res = ringbuf_timed_pop (buf, rb, image_size, G_TIME_SPAN_SECOND);
         if (res == NULL) {
             printf("Timed out...\n");
             continue;
         }
+        end = g_get_monotonic_time ();
+        g_print ("Poped %ld bytes\n", image_size);
         total_data_read += image_size;
+        current_time = end - start;
+        total_time += current_time;
+
+        g_cond_signal (&cond);
     }
     g_free (buf);
     return NULL;
@@ -190,11 +222,11 @@ int main (int argc, char **argv) {
     image_queue = g_async_queue_new ();
     request_queue = g_async_queue_new ();
 
-    guint nb_images = 3000, res_x = 1000, res_y = 1000, byte_depth = 2;
+    guint nb_images = 3000, res_x = 2048, res_y = 1952, byte_depth = 2;
     gsize image_size = res_x * res_y * byte_depth;
 
     g_print ("Creating\n");
-    rb = ringbuf_new (image_size, nb_images-10);
+    rb = ringbuf_new (image_size*nb_images, TRUE, NULL);
 
     g_assert(ringbuf_is_empty(rb));
 
@@ -202,16 +234,21 @@ int main (int argc, char **argv) {
     signal(SIGINT, handle_sigint);
     signal(SIGTERM, handle_sigint);
 
+    g_mutex_init (&mutex);
+    g_cond_init (&cond);
+
     // Create threads
-    g_print ("Starting reader\n");
+    // g_print ("Starting profiler\n");
+    GThread *profiler_thread = g_thread_new ("profiler", profiler, NULL);
+    // g_print ("Starting reader\n");
     GThread *reader = g_thread_new ("reader", reader_thread, NULL);
-    g_print ("Starting writer\n");
+    // g_print ("Starting writer\n");
     GThread *writer = g_thread_new ("receiver", receiver_thread, NULL);
-    g_print ("Starting generator\n");
+    // g_print ("Starting generator\n");
     GThread *generator = g_thread_new ("generator", generate_images, NULL);
 
     // Request images
-    guint MaxNumberOfImagesPerCall = 2;
+    guint MaxNumberOfImagesPerCall = 4;
     for (guint i = 0; i < MaxNumberOfImagesPerCall; i ++) {
         request_images (nb_images, res_x, res_y, byte_depth);
     }
