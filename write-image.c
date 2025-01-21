@@ -115,7 +115,7 @@ gpointer pop (gpointer data) {
 int main (int argc, char **argv) {
     g_print ("main\n");
 
-    gsize buffer_size = 5 * image_size;
+    gsize buffer_size = 5 * (image_size ) + 4096;
 
     rb = ringbuf_new (buffer_size, TRUE, NULL);
     g_assert(ringbuf_is_empty(rb));

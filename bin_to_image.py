@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # open binary files
-image_names = ["build/test{}_out.bin".format(i) for i in range(0, 5)]
+image_names = ["test{}_out.bin".format(i) for i in range(0, 5)]
 
 # reshape to 512, 768
 images = [np.fromfile(x, dtype=np.uint16).reshape(512, 768) for x in image_names]
