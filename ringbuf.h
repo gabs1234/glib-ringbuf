@@ -1,11 +1,27 @@
 #ifndef INCLUDED_RINGBUF_H
 #define INCLUDED_RINGBUF_H
 
+
+#define _GNU_SOURCE
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <linux/memfd.h>
+#include <sys/syscall.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
 #include <glib.h>
+
 
 #define MAX_BYTE_POWER_OF_TWO 3
 typedef guint64 ringbuf_max_gsize;
 #define PLATFORM_MAX_BYTES 1 << MAX_BYTE_POWER_OF_TWO
+
+
 
 /*
  * ringbuf.h - C ring buffer (FIFO) interface.
@@ -43,7 +59,7 @@ typedef struct _ringbuf_t ringbuf_t;
  * Returns the new ring buffer object, or 0 if there's not enough
  * memory to fulfill the request for the given capacity.
  */
-ringbuf_t *ringbuf_new (gsize size, gboolean block, GError **error);
+ringbuf_t *ringbuf_new (gsize size, gboolean block);
 
 /*
  * The size of the internal buffer, in bytes. One or more bytes may be
@@ -130,26 +146,13 @@ gpointer ringbuf_pop (gpointer dst, ringbuf_t *src, gsize size);
 gpointer ringbuf_timed_pop (gpointer dst, ringbuf_t *src, gsize size, guint64 timeout);
 gboolean ringbuf_direct_copy (ringbuf_t *src, ringbuf_t *dst, gsize size);
 
-// /*
-//  * This convenience function calls write(2) on the file descriptor fd,
-//  * using the ring buffer rb as the source buffer for writing (starting
-//  * at the ring buffer's tail pointer), and returns the value returned
-//  * by write(2). It will only call write(2) once, and may return a
-//  * short count.
-//  *
-//  * Note that this copy is destructive with respect to the ring buffer:
-//  * any bytes written from the ring buffer to the file descriptor are
-//  * no longer available in the ring buffer after the copy is complete,
-//  * and the ring buffer will have N more free bytes than it did before
-//  * the function was called, where N is the value returned by the
-//  * function (unless N is < 0, in which case an error occurred and no
-//  * bytes were written).
-//  *
-//  * This function will *not* allow the ring buffer to underflow. If
-//  * count is greater than the number of bytes used in the ring buffer,
-//  * no bytes are written to the file descriptor, and the function will
-//  * return 0.
-//  */
-// gssize ringbuf_write(int fd, ringbuf_t *rb, gsize count);
+
+gconstpointer ringbuf_move_tail (ringbuf_t *rb, gsize size);
+gconstpointer ringbuf_move_head (ringbuf_t *rb, gsize size);
+
+gpointer ringbuf_reserve (ringbuf_t *rb, gsize size);
+void ringbuf_commit (ringbuf_t *rb);
+
+gsize ringbuf_wait_for_data (ringbuf_t *rb, gsize size);
 
 #endif /* INCLUDED_RINGBUF_H */

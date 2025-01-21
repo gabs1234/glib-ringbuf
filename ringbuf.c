@@ -9,13 +9,6 @@
 
 #include "ringbuf.h"
 
-
-#include <unistd.h>
-#include <linux/memfd.h>
-#include <sys/syscall.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-
 typedef struct message_t {
     gsize len;
     guint8 *address;
@@ -40,12 +33,17 @@ static inline int memfd_create(const char *name, unsigned int flags) {
 }
 #endif
 
-ringbuf_t *ringbuf_new (gsize size, gboolean block, GError **error) {
+ringbuf_t *ringbuf_new (gsize size, gboolean block) {
     // Check that the requested size is a multiple of a page. If it isn't, we're in trouble.
     gsize s = size;
-    if (s % getpagesize() != 0) {
-        g_warning ("Requested ring buffer size is not a multiple of a page");
-        return NULL;
+    gsize page_size = getpagesize();
+    if (s % page_size != 0) {
+        if (s < page_size) {
+            s = 2*page_size;
+        }
+        else {
+            s = (s / page_size + 1) * page_size;
+        }
     }
 
     gint fd = -1;
@@ -190,6 +188,40 @@ gconstpointer ringbuf_head (ringbuf_t *rb) {
     return retval;
 }
 
+gconstpointer ringbuf_move_tail (ringbuf_t *rb, gsize size) {
+    gpointer tail = NULL;
+    
+    // Wait for data to become available
+    g_mutex_lock(&rb->mutex);
+    while (ringbuf_bytes_used_unlocked(rb) < size) {
+        g_cond_wait (&rb->readable, &rb->mutex);
+    }
+
+    rb->tail += size;
+    tail = rb->buf + rb->tail;
+
+    if(rb->tail >= rb->buffer_size) {
+        rb->head -= rb->buffer_size;
+        rb->tail -= rb->buffer_size;
+    }
+
+    g_cond_signal (&rb->writeable);
+    g_mutex_unlock (&rb->mutex);
+
+    return tail;
+}
+
+gconstpointer ringbuf_move_head (ringbuf_t *rb, gsize size) {
+    gpointer head = NULL;
+    
+    // Wait for space to become available
+    g_mutex_lock(&rb->mutex);
+    rb->head += size;
+    head = rb->buf + rb->head;
+    g_mutex_unlock(&rb->mutex);
+
+    return head;
+}
 
 gpointer ringbuf_push(ringbuf_t *dst, gconstpointer src, gsize size) {
     gpointer head = NULL;
@@ -207,7 +239,6 @@ gpointer ringbuf_push(ringbuf_t *dst, gconstpointer src, gsize size) {
     head = dst->buf + dst->head;
     g_cond_signal(&dst->readable);
     g_mutex_unlock(&dst->mutex);
-
 
     return head;
 }
@@ -263,7 +294,6 @@ gpointer ringbuf_timed_pop (gpointer dst, ringbuf_t *src, gsize size, guint64 ti
     g_cond_signal (&src->writeable);
     g_mutex_unlock (&src->mutex);
     
-
     return tail;
 }
 
@@ -298,4 +328,63 @@ gboolean ringbuf_direct_copy (ringbuf_t *src, ringbuf_t *dst, gsize size) {
     g_mutex_unlock(&src->mutex);
 
     return TRUE;
+}
+
+gpointer ringbuf_reserve (ringbuf_t *rb, gsize size) {
+    gconstpointer head = NULL;
+    
+    // Wait for space to become available
+    g_mutex_lock(&rb->mutex);
+    if (rb->block_on_full) {
+        while (ringbuf_bytes_free_unlocked(rb) < size) {
+            g_cond_wait(&rb->writeable, &rb->mutex);
+        }
+    }
+
+    head = rb->buf + rb->head;
+    rb->head += size;
+    g_mutex_unlock(&rb->mutex);
+
+    return head;
+}
+
+void ringbuf_commit (ringbuf_t *rb) {
+    g_mutex_lock(&rb->mutex);
+    g_cond_signal(&rb->readable);
+    g_mutex_unlock(&rb->mutex);
+}
+
+gsize ringbuf_wait_for_data_timed (ringbuf_t *rb, gsize size, guint64 timeout) {
+    gsize bytes_used = 0;
+    guint64 end_time = 0;
+    
+    // Wait for data to become available
+    g_mutex_lock(&rb->mutex);
+    end_time = g_get_monotonic_time () + timeout;
+    while (ringbuf_bytes_used_unlocked(rb) < size) {
+        if (!g_cond_wait_until (&rb->readable, &rb->mutex, end_time)) {
+            g_mutex_unlock (&rb->mutex);
+            return 0;
+        }
+    }
+
+    bytes_used = ringbuf_bytes_used_unlocked(rb);
+    g_mutex_unlock (&rb->mutex);
+    
+    return bytes_used;
+}
+
+gsize ringbuf_wait_for_data (ringbuf_t *rb, gsize size) {
+    gsize bytes_used = 0;
+    
+    // Wait for data to become available
+    g_mutex_lock(&rb->mutex);
+    while (ringbuf_bytes_used_unlocked(rb) < size) {
+        g_cond_wait (&rb->readable, &rb->mutex);
+    }
+
+    bytes_used = ringbuf_bytes_used_unlocked(rb);
+    g_mutex_unlock (&rb->mutex);
+    
+    return bytes_used;
 }

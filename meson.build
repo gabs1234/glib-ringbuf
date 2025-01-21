@@ -4,30 +4,10 @@ project('ringbuf', 'c',
 
 c_args = ['-O2', '-D_GNU_SOURCE','-Wall', '-Wextra', '-g']
 
-headers = include_directories('.')
-
 glib_dep = dependency('glib-2.0', version: '>= 2.38')
 deps = [glib_dep]
 
-sources = files('ringbuf-test.c', 'ringbuf.c')
-sources2 = files('write-image.c', 'ringbuf.c')
+ringbuf = files('ringbuf.c')
+headers = include_directories('.')
 
-executable (
-    'ringbuf-test', 
-    sources, 
-    dependencies: deps, 
-    c_args: c_args,
-    include_directories: headers)
-
-executable (
-    'write-image', 
-    sources2, 
-    dependencies: deps, 
-    c_args: c_args,
-    include_directories: headers)
-# executable (
-#     'ringbuf-block', 
-#     sources2, 
-#     dependencies: deps, 
-#     c_args: c_args,
-#     include_directories: headers)
+subdir('example')
