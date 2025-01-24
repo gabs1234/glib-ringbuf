@@ -170,7 +170,7 @@ gpointer ringbuf_reserve (ringbuf_t *rb, gsize size);
  *
  * Signals that reserved data has now been written.
  */
-void ringbuf_commit (ringbuf_t *rb);
+void ringbuf_commit (ringbuf_t *rb, gsize size);
 
 /**
  * ringbuf_wait_for_data:
