@@ -17,7 +17,7 @@ typedef struct message_t {
 struct _ringbuf_t {
     guint8 *buf;
     gint fd;
-    gsize head, tail, buffer_size;
+    gsize head, tail, buffer_size, reserved_size;
     GMutex mutex;
     GCond readable, writeable;
     gboolean block_on_full;
@@ -140,7 +140,9 @@ void ringbuf_free (ringbuf_t *rb) {
 static gsize ringbuf_bytes_free_unlocked (ringbuf_t *rb) {
     gsize free = 0;
     if (rb->tail <= rb->head) {
-        free = rb->buffer_size - (rb->head - rb->tail);
+        gsize used = rb->head - rb->tail;
+        gsize total = rb->buffer_size;
+        free = total - used;
     }
     else {
         free = rb->tail - rb->head;
@@ -234,9 +236,18 @@ gpointer ringbuf_push(ringbuf_t *dst, gconstpointer src, gsize size) {
         }
     }
 
+    if (size > dst->buffer_size) {
+        g_warning ("Data size exceeds buffer size");
+        return NULL;
+    }
+
     memcpy(dst->buf + dst->head, src, size);
     dst->head += size;
     head = dst->buf + dst->head;
+
+    if(dst->head >= dst->buffer_size) {
+        dst->head -= dst->buffer_size;
+    }
     g_cond_signal(&dst->readable);
     g_mutex_unlock(&dst->mutex);
 
@@ -257,7 +268,6 @@ gpointer ringbuf_pop (gpointer dst, ringbuf_t *src, gsize size) {
     tail = src->buf + src->tail;
 
     if(src->tail >= src->buffer_size) {
-        src->head -= src->buffer_size;
         src->tail -= src->buffer_size;
     }
 
@@ -282,12 +292,11 @@ gpointer ringbuf_timed_pop (gpointer dst, ringbuf_t *src, gsize size, guint64 ti
         }
     }
 
-    memcpy (dst, &src->buf[src->tail], size);
+    memcpy (dst, src->buf + src->tail, size);
     src->tail += size;
     tail = src->buf + src->tail;
 
     if(src->tail >= src->buffer_size) {
-        src->head -= src->buffer_size;
         src->tail -= src->buffer_size;
     }
 
@@ -331,7 +340,7 @@ gboolean ringbuf_direct_copy (ringbuf_t *src, ringbuf_t *dst, gsize size) {
 }
 
 gpointer ringbuf_reserve (ringbuf_t *rb, gsize size) {
-    gconstpointer head = NULL;
+    gpointer head = NULL;
     
     // Wait for space to become available
     g_mutex_lock(&rb->mutex);
@@ -342,14 +351,22 @@ gpointer ringbuf_reserve (ringbuf_t *rb, gsize size) {
     }
 
     head = rb->buf + rb->head;
-    rb->head += size;
     g_mutex_unlock(&rb->mutex);
 
     return head;
 }
 
-void ringbuf_commit (ringbuf_t *rb) {
+void ringbuf_commit (ringbuf_t *rb, gsize size) {
+    if (size > rb->buffer_size) {
+        g_warning ("Data size exceeds buffer size");
+        return;
+    }
+    
     g_mutex_lock(&rb->mutex);
+    rb->head += size;
+    if(rb->head >= rb->buffer_size) {
+        rb->head -= rb->buffer_size;
+    }
     g_cond_signal(&rb->readable);
     g_mutex_unlock(&rb->mutex);
 }
