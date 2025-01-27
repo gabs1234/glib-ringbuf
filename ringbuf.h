@@ -16,11 +16,6 @@
 
 #include <glib.h>
 
-
-#define MAX_BYTE_POWER_OF_TWO 3
-typedef guint64 ringbuf_max_gsize;
-#define PLATFORM_MAX_BYTES 1 << MAX_BYTE_POWER_OF_TWO
-
 typedef struct _ringbuf_t ringbuf_t;
 
 /**

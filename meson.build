@@ -11,3 +11,4 @@ ringbuf = files('ringbuf.c')
 headers = include_directories('.')
 
 subdir('example')
+subdir('test')
